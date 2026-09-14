@@ -19,6 +19,11 @@ def main() -> None:
         print(f"J{m.game:02d} {m.home} x {m.away}: {row['pick']:<3} [{position}] | {ranking}")
         print(f"    p(1)={m.probabilities['1']:.3f} p(X)={m.probabilities['X']:.3f} p(2)={m.probabilities['2']:.3f}; balance={f['balance']:.3f}; {factors}")
     check = result["validation"]
+    print("\n=== SCORE DO BILHETE ===")
+    print(f"Score P14: {result['score_p14']:.6f}")
+    for role in ("triple", "dry_top1", "dry_top2", "dry_top3"):
+        balance = result["ticket_features"][f"{role}_balance_mean"]
+        print(f"{role:>8}: equilíbrio médio={balance:.3f}")
     print("Hard Constraints:", "OK" if check["valid"] else "FALHA", check)
     print("Regra Flamengo:", "OK" if check["flamengo_ok"] else "FALHA")
     print("Preferência Palmeiras:", "vitória excluída" if result["avoids_palmeiras_win"] else "não aplicada sem perda relevante")

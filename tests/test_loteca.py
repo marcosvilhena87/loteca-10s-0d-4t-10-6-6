@@ -15,6 +15,10 @@ class LotecaTest(unittest.TestCase):
     def test_training_is_temporal(self):
         self.assertEqual(self.model["trained_before"], 900)
         self.assertGreater(self.model["training_matches"], 0)
+        self.assertLess(self.model["trained_until"], 900)
+        self.assertGreater(self.model["p14_profile_contests"], 0)
+        self.assertEqual(set(self.model["ticket_profiles"]),
+                         {"triple", "dry_top1", "dry_top2", "dry_top3"})
 
     def test_constraints_and_team_rules(self):
         matches = []
@@ -26,6 +30,8 @@ class LotecaTest(unittest.TestCase):
         self.assertIn("1", result["picks"][1])
         self.assertNotIn("1", result["picks"][2])
         self.assertEqual(result["validation"]["rank_counts"], {1: 10, 2: 6, 3: 6})
+        self.assertIn("triple_balance_mean", result["ticket_features"])
+        self.assertTrue(any(row["role"] is None and row["contributions"] for row in result["detail"]))
 
     def test_rejects_incomplete_ticket(self):
         with self.assertRaises(ValueError):
