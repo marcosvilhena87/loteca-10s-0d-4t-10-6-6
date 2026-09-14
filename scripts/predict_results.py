@@ -33,6 +33,37 @@ def _role_score(match, rank: int, model: dict) -> tuple[float, dict[str, float]]
 FEATURE_NAMES = ("top1", "top2", "top3", "gap12", "gap23", "balance")
 
 
+def _ticket_features(matches, roles: dict[int, int], triples) -> dict[str, float]:
+    triple_set = set(triples)
+    grouped = {"dry_top1": [], "dry_top2": [], "dry_top3": [], "triple": []}
+    dry_probabilities = []
+    for i, match in enumerate(matches):
+        role = None if i in triple_set else roles[i]
+        grouped["triple" if role is None else f"dry_top{role}"].append(features(match))
+        if role is not None:
+            dry_probabilities.append(match.ranked_probabilities[role - 1])
+    result = {}
+    for role, values in grouped.items():
+        for name in FEATURE_NAMES:
+            result[f"{role}_{name}_mean"] = sum(v[name] for v in values) / len(values)
+    result["min_dry_probability"] = min(dry_probabilities)
+    result["mean_dry_probability"] = sum(dry_probabilities) / len(dry_probabilities)
+    result["product_dry_probability"] = math.prod(dry_probabilities)
+    return result
+
+
+def _global_score(ticket_features: dict[str, float], model: dict) -> float:
+    """Score aggregate ticket shape against leakage-safe historical P14 moments."""
+    profile = model.get("global_ticket_profile", {})
+    if not profile:  # backwards compatibility with version-2 model files
+        return 0.0
+    distance = sum(
+        ((ticket_features[name] - moments["mean"]) / moments["std"]) ** 2
+        for name, moments in profile.items()
+    )
+    return -.02 * distance / len(profile)
+
+
 def _triple_score(match, model: dict) -> tuple[float, dict[str, float]]:
     profile = model.get("ticket_profiles", {}).get("triple")
     if not profile:  # backwards compatibility with version-1 model files
@@ -86,9 +117,12 @@ def select_ticket(matches, model: dict, palmeiras_tolerance: float = .03) -> dic
                             new_states[key] = candidate
                 states = new_states
             if (2, 2) in states:
-                score, roles = states[(2, 2)]
+                local_score, roles = states[(2, 2)]
+                aggregate = _ticket_features(matches, roles, triples)
+                global_score = _global_score(aggregate, model)
+                score = local_score + global_score
                 if best is None or score > best[0]:
-                    best = (score, roles, triples)
+                    best = (score, roles, triples, aggregate, local_score, global_score)
         return best
 
     unrestricted = optimize(False)
@@ -100,7 +134,7 @@ def select_ticket(matches, model: dict, palmeiras_tolerance: float = .03) -> dic
     best = chosen
     if best is None:
         raise ValueError("nenhum palpite satisfaz as Hard Constraints")
-    score, roles, triples = best
+    score, roles, triples, ticket_features, local_score, global_score = best
     picks = {m.game: ("1X2" if i in triples else m.ranking[roles[i]-1])
              for i, m in enumerate(matches)}
     validation = validate_ticket(matches, picks)
@@ -112,16 +146,9 @@ def select_ticket(matches, model: dict, palmeiras_tolerance: float = .03) -> dic
         detail.append({"match": match, "pick": picks[match.game], "role": role,
                        "contributions": (triple_options[i][1] if role is None
                                          else options[i][role][1])})
-    grouped = {"dry_top1": [], "dry_top2": [], "dry_top3": [], "triple": []}
-    for row in detail:
-        grouped["triple" if row["role"] is None else f"dry_top{row['role']}"].append(
-            features(row["match"]))
-    ticket_features = {}
-    for role, values in grouped.items():
-        for name in FEATURE_NAMES:
-            ticket_features[f"{role}_{name}_mean"] = sum(v[name] for v in values) / len(values)
     return {"score": score, "avoids_palmeiras_win": avoids_palmeiras,
             "score_p14": score, "ticket_features": ticket_features,
+            "score_local": local_score, "score_global_p14": global_score,
             "picks": picks, "validation": validation, "detail": detail}
 
 

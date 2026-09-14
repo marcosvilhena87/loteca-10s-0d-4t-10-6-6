@@ -165,6 +165,12 @@ A meta é sair de um score predominantemente aditivo por jogo e chegar a:
 Score_ticket = Score_secos + Score_triplos + Score_global_P14
 ```
 
+O modelo implementa esse componente global estimando, somente nos concursos
+anteriores ao alvo, médias e dispersões das features agregadas dos bilhetes
+compatíveis com P14. Durante a busca, cada candidato recebe uma penalização pela
+distância padronizada até esse perfil histórico. O score local, o componente
+global e o total são mantidos separadamente para auditoria.
+
 ---
 
 ## Validação histórica — walk-forward
