@@ -21,6 +21,26 @@ def _role_score(match, rank: int, model: dict) -> tuple[float, dict[str, float]]
     for name in ("gap12", "gap23", "balance"):
         profile = model["profiles"][str(rank)][name]
         contributions[name] = -.04 * ((f[name] - profile["mean"]) / profile["std"]) ** 2
+    ticket_profile = model.get("ticket_profiles", {}).get(f"dry_top{rank}")
+    if ticket_profile:
+        contributions["ticket_p14"] = -.025 * sum(
+            ((f[name] - ticket_profile[name]["mean"]) / ticket_profile[name]["std"]) ** 2
+            for name in FEATURE_NAMES
+        )
+    return sum(contributions.values()), contributions
+
+
+FEATURE_NAMES = ("top1", "top2", "top3", "gap12", "gap23", "balance")
+
+
+def _triple_score(match, model: dict) -> tuple[float, dict[str, float]]:
+    profile = model.get("ticket_profiles", {}).get("triple")
+    if not profile:  # backwards compatibility with version-1 model files
+        return 0.0, {}
+    f = features(match)
+    contributions = {name: -.025 * ((f[name] - profile[name]["mean"]) /
+                                     profile[name]["std"]) ** 2
+                     for name in FEATURE_NAMES}
     return sum(contributions.values()), contributions
 
 
@@ -30,6 +50,7 @@ def select_ticket(matches, model: dict, palmeiras_tolerance: float = .03) -> dic
     options = {}
     for i, match in enumerate(matches):
         options[i] = {r: _role_score(match, r, model) for r in (1, 2, 3)}
+    triple_options = {i: _triple_score(match, model) for i, match in enumerate(matches)}
     indices = range(14)
     def optimize(avoid_palmeiras: bool):
         best = None
@@ -40,7 +61,7 @@ def select_ticket(matches, model: dict, palmeiras_tolerance: float = .03) -> dic
                 continue
             # Dynamic programming visits every rank-count state without materializing
             # all 1,260 combinations for each set of triples.
-            states = {(0, 0): (0.0, {})}
+            states = {(0, 0): (sum(triple_options[i][0] for i in triples), {})}
             for i in (j for j in indices if j not in triple_set):
                 allowed = []
                 for rank in (1, 2, 3):
@@ -89,8 +110,18 @@ def select_ticket(matches, model: dict, palmeiras_tolerance: float = .03) -> dic
     for i, match in enumerate(matches):
         role = None if i in triples else roles[i]
         detail.append({"match": match, "pick": picks[match.game], "role": role,
-                       "contributions": {} if role is None else options[i][role][1]})
+                       "contributions": (triple_options[i][1] if role is None
+                                         else options[i][role][1])})
+    grouped = {"dry_top1": [], "dry_top2": [], "dry_top3": [], "triple": []}
+    for row in detail:
+        grouped["triple" if row["role"] is None else f"dry_top{row['role']}"].append(
+            features(row["match"]))
+    ticket_features = {}
+    for role, values in grouped.items():
+        for name in FEATURE_NAMES:
+            ticket_features[f"{role}_{name}_mean"] = sum(v[name] for v in values) / len(values)
     return {"score": score, "avoids_palmeiras_win": avoids_palmeiras,
+            "score_p14": score, "ticket_features": ticket_features,
             "picks": picks, "validation": validation, "detail": detail}
 
 

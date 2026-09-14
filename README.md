@@ -443,10 +443,16 @@ O projeto já possui:
 - preferência secundária relativa ao Palmeiras;
 - saída `output/predictions.csv`;
 - testes automatizados.
+- perfis de papéis (`triplo`, `seco top1/top2/top3`) aprendidos apenas nos
+  concursos historicamente compatíveis com P14;
+- score explícito e features agregadas no nível do bilhete;
+- backtest walk-forward com uma observação por concurso em `output/backtest.csv`.
 
 ### Limitação atual principal
 
-O score atual ainda é predominantemente construído no **nível da partida**.
+O score combina a calibração por partida com perfis dos papéis observados em
+bilhetes historicamente compatíveis com P14. A próxima evolução é calibrar o
+score global diretamente sobre um volume maior de observações de bilhetes.
 
 Ele aprende algo próximo de:
 
@@ -621,6 +627,12 @@ Para executar os testes:
 
 ```bash
 python -m unittest discover -v
+```
+
+Para executar o backtest walk-forward (pode levar alguns minutos):
+
+```bash
+python -m scripts.backtest
 ```
 
 ---
