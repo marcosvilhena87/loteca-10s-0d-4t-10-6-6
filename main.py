@@ -21,6 +21,8 @@ def main() -> None:
     check = result["validation"]
     print("\n=== SCORE DO BILHETE ===")
     print(f"Score P14: {result['score_p14']:.6f}")
+    print(f"  componente local: {result['score_local']:.6f}")
+    print(f"  perfil global P14: {result['score_global_p14']:.6f}")
     for role in ("triple", "dry_top1", "dry_top2", "dry_top3"):
         balance = result["ticket_features"][f"{role}_balance_mean"]
         print(f"{role:>8}: equilíbrio médio={balance:.3f}")

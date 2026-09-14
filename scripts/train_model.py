@@ -10,6 +10,10 @@ from scripts.common import features, read_matches
 
 FEATURE_NAMES = ("top1", "top2", "top3", "gap12", "gap23", "balance")
 DRY_REQUIREMENTS = {1: 6, 2: 2, 3: 2}
+GLOBAL_FEATURE_NAMES = tuple(
+    [f"triple_{name}_mean" for name in FEATURE_NAMES]
+    + [f"dry_top{rank}_{name}_mean" for rank in (1, 2, 3) for name in FEATURE_NAMES]
+)
 
 
 def _weighted_profile(samples: list[tuple[dict[str, float], float]]) -> dict:
@@ -23,6 +27,19 @@ def _weighted_profile(samples: list[tuple[dict[str, float], float]]) -> dict:
         variance = sum(weight * (row[name] - mean) ** 2 for row, weight in samples) / total
         result[name] = {"mean": mean, "std": max(variance ** .5, .01)}
     return result
+
+
+def _profile_rows(rows: list[dict[str, float]]) -> dict[str, dict[str, float]]:
+    """Estimate stable moments across complete historical P14-compatible tickets."""
+    if not rows:
+        raise ValueError("histórico insuficiente para estimar perfil global P14")
+    profile = {}
+    for name in GLOBAL_FEATURE_NAMES:
+        values = [row[name] for row in rows]
+        mean = sum(values) / len(values)
+        variance = sum((value - mean) ** 2 for value in values) / max(1, len(values) - 1)
+        profile[name] = {"mean": mean, "std": max(variance ** .5, .01)}
+    return profile
 
 
 def train(history_path: str, model_path: str, before_contest: int | None = None) -> dict:
@@ -60,12 +77,33 @@ def train(history_path: str, model_path: str, before_contest: int | None = None)
     for match in rows:
         contests[match.contest].append(match)
     ticket_samples = defaultdict(list)
+    global_ticket_rows = []
     p14_contests = 0
     for contest_matches in contests.values():
         counts = Counter(m.actual_rank for m in contest_matches)
         if len(contest_matches) != 14 or any(counts[r] < DRY_REQUIREMENTS[r] for r in (1, 2, 3)):
             continue
         p14_contests += 1
+        rank_features = {
+            rank: [features(match) for match in contest_matches if match.actual_rank == rank]
+            for rank in (1, 2, 3)
+        }
+        role_means = {
+            rank: {name: sum(row[name] for row in rank_features[rank]) / counts[rank]
+                   for name in FEATURE_NAMES}
+            for rank in (1, 2, 3)
+        }
+        global_row = {
+            f"dry_top{rank}_{name}_mean": role_means[rank][name]
+            for rank in (1, 2, 3) for name in FEATURE_NAMES
+        }
+        # Expected aggregate of the four triples over every valid allocation.
+        for name in FEATURE_NAMES:
+            total_feature = sum(features(match)[name] for match in contest_matches)
+            dry_feature = sum(DRY_REQUIREMENTS[rank] * role_means[rank][name]
+                              for rank in (1, 2, 3))
+            global_row[f"triple_{name}_mean"] = (total_feature - dry_feature) / 4
+        global_ticket_rows.append(global_row)
         for match in contest_matches:
             rank = match.actual_rank
             triple_weight = (counts[rank] - DRY_REQUIREMENTS[rank]) / counts[rank]
@@ -74,12 +112,13 @@ def train(history_path: str, model_path: str, before_contest: int | None = None)
     ticket_profiles = {role: _weighted_profile(ticket_samples[role])
                        for role in ("triple", "dry_top1", "dry_top2", "dry_top3")}
 
-    model = {"version": 2, "trained_before": before_contest,
+    model = {"version": 3, "trained_before": before_contest,
              "training_matches": len(rows), "calibration_bins": bins, "profiles": profiles}
     model["training_contests"] = len(contests)
     model["trained_until"] = max(contests)
     model["p14_profile_contests"] = p14_contests
     model["ticket_profiles"] = ticket_profiles
+    model["global_ticket_profile"] = _profile_rows(global_ticket_rows)
     Path(model_path).parent.mkdir(parents=True, exist_ok=True)
     Path(model_path).write_text(json.dumps(model, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return model
