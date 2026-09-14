@@ -1,0 +1,1 @@
+"""Loteca test suite."""

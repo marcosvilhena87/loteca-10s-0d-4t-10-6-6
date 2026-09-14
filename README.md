@@ -329,3 +329,31 @@ Soft Constraint
     ↓
 palpite final
 ```
+
+## Execução
+
+O projeto usa apenas a biblioteca padrão do Python (3.10 ou superior):
+
+```bash
+python main.py
+```
+
+A execução treina novamente o modelo usando somente concursos anteriores ao
+concurso de entrada, percorre todo o espaço estrutural por programação dinâmica,
+valida explicitamente as restrições e grava o bilhete em
+`output/predictions.csv`. O score principal é a soma dos logaritmos das taxas de
+acerto calibradas por posição e faixa de probabilidade. Um termo pequeno mede a
+semelhança dos gaps e do equilíbrio com os jogos históricos em que cada posição
+foi a vencedora. Dessa forma, probabilidades isoladas não são usadas como único
+critério.
+
+Para executar os testes automatizados:
+
+```bash
+python -m unittest discover -v
+```
+
+O parâmetro `before_contest` de `scripts.train_model.train` é o corte temporal:
+linhas do próprio concurso ou de concursos futuros nunca entram no modelo. A
+mesma função pode ser chamada repetidamente com cortes crescentes para uma
+avaliação *walk-forward*.
