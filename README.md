@@ -24,6 +24,8 @@ Palpite* = argmax Score_P14(palpite)
 
 sujeito a todas as *Hard Constraints*.
 
+> **Importante:** o `Score_P14` atual é um **score de similaridade/ordenação**, não uma probabilidade calibrada de atingir 14 pontos.
+
 ---
 
 ## Representação probabilística
@@ -107,7 +109,7 @@ Essa preferência nunca pode violar uma *Hard Constraint* e deve funcionar apena
 
 ## Score de similaridade P14
 
-O score deve medir o quanto um palpite completo se parece com padrões históricos associados a 14 acertos.
+O score mede o quanto um palpite completo se parece com padrões históricos associados a 14 acertos.
 
 O objetivo de longo prazo é aproximar:
 
@@ -121,18 +123,32 @@ em vez de considerar apenas:
 P(acerto de um jogo | características da partida)
 ```
 
-### Componentes locais
+### Estrutura atual do score
 
-Nos secos, podem contribuir:
+A implementação atual combina:
+
+```text
+Score_total = Score_local + Score_global_P14
+```
+
+onde:
+
+- `Score_local` agrega os scores dos secos e dos triplos;
+- `Score_global_P14` mede a distância do bilhete completo ao perfil histórico agregado de bilhetes compatíveis com P14.
+
+### Componentes locais — secos
+
+Nos secos contribuem, entre outros:
 
 - taxa calibrada de acerto da posição `top1/top2/top3`;
-- probabilidade do resultado escolhido;
 - `gap12`;
 - `gap23`;
 - `balance`;
-- semelhança com perfis históricos de `dry_top1`, `dry_top2` e `dry_top3` associados a P14.
+- semelhança com os perfis históricos de `dry_top1`, `dry_top2` e `dry_top3` associados a P14.
 
-Nos triplos, podem contribuir:
+### Componentes locais — triplos
+
+Nos triplos contribuem:
 
 - `p(top1)`, `p(top2)` e `p(top3)`;
 - `gap12`;
@@ -142,34 +158,34 @@ Nos triplos, podem contribuir:
 
 ### Componentes globais do bilhete
 
-O modelo deve evoluir para considerar explicitamente características agregadas, por exemplo:
+O modelo já utiliza características agregadas como:
 
 ```text
-triple_balance_mean
+triple_top1_mean
+triple_top2_mean
+triple_top3_mean
 triple_gap12_mean
 triple_gap23_mean
-dry_top1_prob_mean
-dry_top2_prob_mean
-dry_top3_prob_mean
+triple_balance_mean
+
+dry_top1_top1_mean
+dry_top1_top2_mean
+dry_top1_top3_mean
+dry_top1_gap12_mean
+dry_top1_gap23_mean
 dry_top1_balance_mean
-dry_top2_balance_mean
-dry_top3_balance_mean
+
+dry_top2_...
+dry_top3_...
+
 min_dry_probability
 mean_dry_probability
 product_dry_probability
 ```
 
-A meta é sair de um score predominantemente aditivo por jogo e chegar a:
+Durante a busca, cada candidato recebe um componente global calculado pela distância padronizada até o perfil histórico P14.
 
-```text
-Score_ticket = Score_secos + Score_triplos + Score_global_P14
-```
-
-O modelo implementa esse componente global estimando, somente nos concursos
-anteriores ao alvo, médias e dispersões das features agregadas dos bilhetes
-compatíveis com P14. Durante a busca, cada candidato recebe uma penalização pela
-distância padronizada até esse perfil histórico. O score local, o componente
-global e o total são mantidos separadamente para auditoria.
+Assim, as features globais **já participam diretamente da otimização**, e não apenas da telemetria.
 
 ---
 
@@ -191,13 +207,13 @@ revelar o resultado real de t
 calcular pontos e métricas
 ```
 
-Proteção recomendada:
+O código deve garantir:
 
 ```python
 assert max(training_contests) < target_contest
 ```
 
-Registrar também:
+Também devem ser registrados:
 
 ```text
 trained_until
@@ -210,9 +226,24 @@ training_contests
 
 ## Backtest no nível do bilhete
 
-O projeto possui `scripts/backtest.py`, responsável por executar validação *walk-forward* concurso a concurso. fileciteturn21file0L1-L2
+O projeto possui `scripts/backtest.py`, que executa validação *walk-forward* concurso a concurso.
 
-A avaliação deve produzir uma observação por concurso/palpite, com métricas como:
+Para cada concurso elegível, o backtest:
+
+1. treina usando apenas concursos anteriores;
+2. gera exatamente um bilhete válido;
+3. calcula a pontuação real;
+4. registra P14, P13+ e P12+;
+5. salva `Score_P14`, `Score_local` e `Score_global_P14`;
+6. salva as features agregadas do bilhete.
+
+Saída:
+
+```text
+output/backtest.csv
+```
+
+Campos principais:
 
 ```text
 Concurso
@@ -221,41 +252,28 @@ P14
 P13_plus
 P12_plus
 Score_P14
+Score_local
+Score_global_P14
 trained_until
+training_matches
+training_contests
 ```
 
-Além disso, deve registrar features agregadas do bilhete para permitir aprender fatores que diferenciam bilhetes de alta pontuação dos demais.
-
-Saída esperada:
-
-```text
-output/backtest.csv
-```
+Esse arquivo é a principal base para validar se novos componentes realmente melhoram o desempenho fora da amostra.
 
 ---
 
 ## Dataset histórico de bilhetes
 
-Uma evolução prioritária é consolidar um dataset com uma linha por concurso, contendo:
+O `output/backtest.csv` funciona como dataset histórico com **uma linha por concurso/palpite**.
 
-```text
-contest
-points
-is_p14
-is_p13_plus
-is_p12_plus
-score
-triple_balance_mean
-triple_gap12_mean
-triple_gap23_mean
-dry_top1_prob_mean
-dry_top2_prob_mean
-dry_top3_prob_mean
-min_dry_probability
-mean_dry_probability
-```
+Além das métricas de desempenho, deve preservar as features agregadas necessárias para estudar:
 
-Esse dataset deve ser a base para aprender um score realmente no **nível do bilhete**.
+- quais características aparecem com mais frequência em bilhetes P14;
+- quais fatores diferenciam P14 de P13/P12 e dos demais;
+- quais componentes ajudam apenas dentro da amostra e quais sobrevivem ao *walk-forward*.
+
+Esse dataset deve ser tratado como unidade principal de aprendizado no nível do bilhete.
 
 ---
 
@@ -265,7 +283,7 @@ P14 continua sendo o objetivo dominante, mas é um evento raro.
 
 P13 e P12 podem ser usados como sinais auxiliares para reduzir instabilidade estatística, sem mudar a prioridade final.
 
-Uma opção:
+Uma possibilidade futura:
 
 ```text
 Score = w14 * P(P14) + w13 * P(P13+) + w12 * P(P12+)
@@ -283,13 +301,14 @@ Outra opção é manter modelos separados para `P14`, `P13+` e `P12+`.
 
 ## Baselines obrigatórios
 
-Toda evolução deve ser comparada com estratégias simples.
+Toda evolução do modelo deve ser comparada com estratégias mais simples.
 
 Baselines recomendados:
 
 1. **Probabilístico** — maximizar a probabilidade dos secos;
 2. **Equilíbrio** — usar os quatro jogos mais equilibrados como triplos;
-3. **Modelo anterior** — score baseado apenas em calibração e perfis locais.
+3. **Modelo sem score global** — componente global desligado;
+4. **Modelo atual completo** — score local + score global P14.
 
 Métricas principais:
 
@@ -310,38 +329,61 @@ Lift_P13 = TaxaP13+_modelo / TaxaP13+_baseline
 Lift_P12 = TaxaP12+_modelo / TaxaP12+_baseline
 ```
 
-Um modelo mais complexo só deve permanecer se superar consistentemente os baselines fora da amostra.
+Um componente novo só deve permanecer se melhorar o desempenho de forma consistente fora da amostra.
 
 ---
 
 ## Ajuste automático de pesos
 
-Pesos de componentes como o perfil P14 não devem ser escolhidos apenas manualmente.
+Pesos como os usados em `ticket_p14` e `Score_global_P14` não devem ser escolhidos apenas manualmente.
 
-Uma grade inicial sugerida:
+Uma grade inicial possível:
 
 ```text
 0.00
 0.01
+0.02
 0.025
 0.05
 0.10
 0.20
+0.50
 ```
 
-Cada peso deve ser avaliado em *walk-forward* e comparado por P14, P13+, P12+ e média de pontos.
+Cada configuração deve ser avaliada em *walk-forward*.
 
-A escolha do peso deve usar apenas desempenho fora da amostra.
+A escolha deve priorizar, nesta ordem:
+
+1. P14;
+2. P13+;
+3. P12+;
+4. média de pontos;
+5. estabilidade entre janelas temporais.
+
+O peso vencedor deve ser escolhido exclusivamente por desempenho fora da amostra.
 
 ---
 
-## Regra do Flamengo no histórico P14
+## Ablation tests
 
-A construção de exemplos históricos compatíveis com P14 também deve respeitar a regra do Flamengo.
+Além de comparar versões completas, o projeto deve testar o efeito de remover um componente por vez.
 
-Se o Flamengo não venceu uma partida histórica, um bilhete P14 válido que inclua obrigatoriamente a vitória do Flamengo só pode acertar aquela partida se ela estiver marcada como triplo.
+Exemplos:
 
-Portanto, o gerador de perfis históricos P14 deve tratar essa condição explicitamente.
+```text
+modelo completo
+modelo sem ticket_p14
+modelo sem score dos triplos
+modelo sem Score_global_P14
+modelo sem calibração por faixa
+modelo sem preferência Palmeiras
+```
+
+O objetivo é responder:
+
+> **Qual componente realmente adiciona valor ao resultado final?**
+
+Um componente que aumenta complexidade sem melhorar P14/P13+/P12+ deve ser removido ou simplificado.
 
 ---
 
@@ -353,35 +395,122 @@ Além do vencedor, é recomendável salvar os melhores candidatos em:
 output/top_candidates.csv
 ```
 
-Exemplo de colunas:
+Campos sugeridos:
 
 ```text
 rank
-score
+score_total
+score_local
+score_global_p14
 triples
 dry_top1
 dry_top2
 dry_top3
 flamengo_ok
 palmeiras_win_included
+delta_to_best
 ```
-
-Isso ajuda a medir a robustez da decisão.
 
 Exemplo:
 
 ```text
-1º  -9.812
-2º  -9.816
-3º  -9.820
+1º  -10.097670
+2º  -10.098011
+3º  -10.101203
 ```
 
-indica uma decisão mais frágil do que:
+indica uma decisão relativamente frágil.
+
+Já:
 
 ```text
-1º  -9.812
-2º  -10.104
+1º  -10.097670
+2º  -10.450000
 ```
+
+indica maior separação entre o vencedor e os demais.
+
+---
+
+## Percentil de similaridade P14
+
+Além do score bruto, uma saída mais interpretável é comparar o bilhete atual com a distribuição histórica dos scores.
+
+Exemplo:
+
+```text
+Score de similaridade P14: -10.097670
+Percentil histórico: 87%
+```
+
+O percentil não representa probabilidade de P14, mas ajuda a responder:
+
+> **Quão parecido este bilhete é com os perfis historicamente associados a P14, em comparação com outros bilhetes avaliados?**
+
+---
+
+## Decomposição do score global
+
+O componente global não deve aparecer apenas como um número agregado.
+
+A telemetria futura deve mostrar quais features mais ajudaram e mais prejudicaram o bilhete.
+
+Exemplo:
+
+```text
+Perfil global P14:
+triple_balance_mean      -0.003
+dry_top1_gap12_mean      -0.002
+dry_top2_balance_mean    -0.011
+dry_top3_top3_mean       -0.004
+min_dry_probability      -0.008
+```
+
+Isso facilita auditoria e detecção de features excessivamente dominantes.
+
+---
+
+## Estabilidade do bilhete
+
+O palpite final também deve ser avaliado por estabilidade.
+
+Uma forma é alterar levemente pesos ou probabilidades e medir quantas marcações mudam.
+
+Exemplos de métricas:
+
+```text
+jogos_inalterados
+secos_inalterados
+triplos_inalterados
+jaccard_triples
+mudancas_por_1pct_probabilidade
+```
+
+Um bilhete que muda drasticamente com pequenas perturbações deve ser tratado como decisão de baixa robustez.
+
+---
+
+## Sensibilidade às probabilidades
+
+As probabilidades de entrada podem conter ruído.
+
+Por isso, é útil executar testes de sensibilidade, perturbando `p(1)`, `p(X)` e `p(2)` em pequenas magnitudes e recalculando o palpite.
+
+Objetivo:
+
+> **Verificar se a escolha depende de diferenças mínimas ou se permanece estável em uma vizinhança plausível das probabilidades observadas.**
+
+Essa análise deve ser separada do treinamento principal para evitar transformar ruído artificial em sinal.
+
+---
+
+## Regra do Flamengo no histórico P14
+
+A construção de exemplos históricos compatíveis com P14 também deve respeitar a regra do Flamengo.
+
+Se o Flamengo não venceu uma partida histórica, um bilhete P14 válido que inclua obrigatoriamente sua vitória só pode acertar aquela partida se ela estiver marcada como triplo.
+
+Portanto, a geração dos perfis históricos P14 deve tratar essa condição explicitamente.
 
 ---
 
@@ -415,7 +544,8 @@ A implementação pode usar programação dinâmica, desde que preserve o ótimo
 ├── models/
 ├── output/
 │   ├── predictions.csv
-│   └── backtest.csv
+│   ├── backtest.csv
+│   └── top_candidates.csv      # planejado
 ├── scripts/
 │   ├── backtest.py
 │   ├── common.py
@@ -424,8 +554,6 @@ A implementação pode usar programação dinâmica, desde que preserve o ótimo
 │   └── train_model.py
 └── tests/
 ```
-
-O repositório atual já contém `backtest.py`, além dos módulos de pré-processamento, treinamento e predição. fileciteturn21file0L1-L2
 
 ---
 
@@ -442,19 +570,28 @@ O projeto já possui:
 - score dos secos;
 - score próprio dos triplos;
 - features agregadas do bilhete;
+- **Score_global_P14 participando diretamente da otimização**;
+- decomposição entre `Score_local` e `Score_global_P14`;
 - busca eficiente sob 10S/0D/4T;
 - validação 10/6/6;
-- regra obrigatória do Flamengo;
+- regra obrigatória do Flamengo na seleção do concurso atual;
 - preferência secundária relativa ao Palmeiras;
-- backtest walk-forward;
+- backtest walk-forward com uma observação por concurso;
+- registro das features do bilhete no backtest;
 - testes automatizados;
 - saída em `output/predictions.csv`.
 
-### Limitação principal atual
+### Limitações principais atuais
 
-O score ainda combina principalmente contribuições locais e perfis por papel. O próximo salto é fazer as **features agregadas do bilhete inteiro participarem diretamente da otimização**, e não apenas da telemetria.
+As prioridades agora são menos sobre adicionar novas features e mais sobre **validar e calibrar o que já existe**:
 
-Também é importante calibrar os pesos por *walk-forward* e medir ganho contra baselines.
+1. o peso do componente global ainda precisa ser escolhido por *walk-forward*;
+2. ainda falta comparação sistemática com baselines;
+3. ainda falta ranking dos melhores candidatos;
+4. ainda faltam *ablation tests*;
+5. ainda falta medir estabilidade/sensibilidade;
+6. o `Score_P14` ainda não é uma probabilidade calibrada de P14;
+7. a construção dos perfis históricos deve garantir integralmente todas as *Hard Constraints*, inclusive a regra do Flamengo.
 
 ---
 
@@ -476,49 +613,65 @@ A execução deve mostrar informação suficiente para auditar a decisão.
 
 ### Por bilhete
 
-Exemplo:
+Exemplo atual:
 
 ```text
 === SCORE DO BILHETE ===
-Score de similaridade P14: ...
-
-triple:   equilíbrio médio=...
+Score P14: ...
+  componente local: ...
+  perfil global P14: ...
+  triple: equilíbrio médio=...
 dry_top1: equilíbrio médio=...
 dry_top2: equilíbrio médio=...
 dry_top3: equilíbrio médio=...
 ```
 
-O score deve ser tratado como **score de ordenação/similaridade**, e não como probabilidade calibrada de P14 enquanto não houver uma camada específica de calibração.
+Evolução desejada:
+
+```text
+Score de similaridade P14: ...
+Percentil histórico: ...
+Delta para o 2º colocado: ...
+
+Maiores contribuições positivas: ...
+Maiores penalizações: ...
+Estabilidade do bilhete: ...
+```
 
 ---
 
 ## Roadmap — ordem de maior retorno
 
-1. **Backtest walk-forward robusto** com comparação automática contra baselines;
-2. **dataset histórico de bilhetes** com uma linha por concurso;
-3. **score global do bilhete**, usando features agregadas;
-4. **ajuste automático dos pesos** por desempenho fora da amostra;
-5. **correção completa da regra do Flamengo** na geração dos perfis históricos P14;
-6. **P13/P12 como sinais auxiliares**, mantendo P14 dominante;
-7. **ranking dos melhores candidatos**;
-8. **calibração futura de `P(P14 | bilhete)`**.
+1. **Otimizar automaticamente os pesos** de `ticket_p14` e `Score_global_P14` via walk-forward;
+2. **comparar sistematicamente com baselines** simples e com o modelo sem score global;
+3. **implementar ranking dos melhores candidatos** e `delta_to_best`;
+4. **executar ablation tests** para medir a contribuição real de cada componente;
+5. **adicionar percentil de similaridade P14**;
+6. **decompor o Score_global_P14 por feature**;
+7. **medir estabilidade e sensibilidade** do bilhete a pequenas perturbações;
+8. **garantir a regra do Flamengo também na construção histórica P14**;
+9. **usar P13/P12 como sinais auxiliares**, mantendo P14 dominante;
+10. **calibrar futuramente `P(P14 | bilhete)`** quando houver volume suficiente de observações walk-forward.
 
 ### Pareto prático
 
-Se apenas quatro itens forem implementados primeiro:
+Se apenas cinco itens forem implementados primeiro:
 
 ```text
-1. backtest.py walk-forward
-2. dataset de features de bilhete
-3. Score_global_P14
-4. otimização automática dos pesos
+1. ajuste automático do peso global
+2. ranking dos candidatos
+3. ablation tests
+4. comparação com baselines
+5. percentil de similaridade P14
 ```
 
-Esses quatro itens têm o maior potencial de transformar o projeto de um otimizador de escolhas individuais em um verdadeiro **otimizador histórico de bilhetes P14**.
+Esses itens têm maior retorno agora porque ajudam a distinguir **ganho real de desempenho** de mera complexidade adicional.
 
 ---
 
 ## Execução
+
+Palpite do próximo concurso:
 
 ```bash
 python main.py
@@ -557,11 +710,13 @@ padrões associados a P14
     ↓
 geração dos candidatos válidos
     ↓
-Score_P14
+Score_local + Score_global_P14
     ↓
 Hard Constraints
     ↓
 Soft Constraint
+    ↓
+validação contra baselines
     ↓
 palpite final
 ```
