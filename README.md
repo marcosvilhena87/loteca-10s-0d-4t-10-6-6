@@ -1,10 +1,10 @@
 # Loteca — 10S / 0D / 4T — 10 / 6 / 6
 
-Projeto para gerar **um único palpite final por concurso da Loteca**, escolhendo, entre os palpites válidos, aquele que mais se parece com os **padrões históricos associados a P14**, sempre respeitando todas as *Hard Constraints* da estratégia.
+Projeto para gerar **um único palpite final por concurso da Loteca**, escolhendo, entre todos os palpites válidos, aquele mais alinhado aos **fatores historicamente associados a P14**, sempre respeitando todas as *Hard Constraints* da estratégia.
 
 ## Objetivo
 
-A estratégia é baseada no histórico disponível em:
+A estratégia utiliza o histórico disponível em:
 
 ```text
 data/concursos_anteriores.csv
@@ -12,9 +12,17 @@ data/concursos_anteriores.csv
 
 O objetivo central é:
 
-> **Escolher o palpite válido que mais se parece com os padrões históricos associados a P14, respeitando todas as Hard Constraints.**
+> **Gerar um único palpite final por concurso, otimizado para maximizar a chance de atingir 14 acertos a partir dos fatores que mais estiveram associados a P14 nos concursos anteriores, respeitando todas as Hard Constraints.**
 
-A proposta não é apenas escolher o resultado de maior probabilidade em cada jogo. O projeto busca aprender, a partir dos concursos anteriores, quais características dos palpites estiveram mais associadas a pontuações máximas e usar esses padrões para selecionar o palpite do próximo concurso.
+A proposta não é simplesmente escolher o resultado de maior probabilidade em cada partida. O projeto deve aprender quais características dos **bilhetes completos** estiveram mais associadas a 14 acertos e, para cada novo concurso, selecionar o palpite válido mais semelhante a esse perfil histórico.
+
+Formalmente:
+
+```text
+Palpite* = argmax Score_P14(palpite)
+```
+
+sujeito a todas as *Hard Constraints*.
 
 ---
 
@@ -26,19 +34,19 @@ Para cada partida, são representadas as probabilidades dos três resultados pos
 - `p(X)` — empate;
 - `p(2)` — vitória do visitante.
 
-Em seguida, as três probabilidades são ordenadas da maior para a menor para formar:
+As probabilidades são ordenadas da maior para a menor para formar:
 
 - `p(top1)` — maior probabilidade;
 - `p(top2)` — segunda maior probabilidade;
 - `p(top3)` — menor probabilidade.
 
-Em caso de probabilidades iguais, o desempate segue a prioridade:
+Em caso de empate, o desempate segue a prioridade:
 
 ```text
 1 > 2 > X
 ```
 
-O resultado real de cada partida também é representado em relação a esse ranking probabilístico por *One-Hot Encoding*:
+O resultado real de cada partida também é representado em relação ao ranking probabilístico por *One-Hot Encoding*:
 
 - `top1_hit`
 - `top2_hit`
@@ -60,7 +68,7 @@ Todo palpite final deve obrigatoriamente satisfazer:
 
 Cada triplo (`1X2`) contém um resultado `top1`, um `top2` e um `top3`.
 
-Portanto, os 4 triplos já consomem:
+Os 4 triplos já consomem:
 
 ```text
 4 top1
@@ -76,7 +84,7 @@ Como o total exigido é:
 6 top3
 ```
 
-os 10 secos devem obrigatoriamente ser distribuídos como:
+os 10 secos devem necessariamente ser:
 
 ```text
 6 secos top1
@@ -84,7 +92,7 @@ os 10 secos devem obrigatoriamente ser distribuídos como:
 2 secos top3
 ```
 
-Assim, qualquer palpite válido tem necessariamente a estrutura:
+Portanto, todo palpite válido tem a estrutura:
 
 ```text
 4 triplos
@@ -99,65 +107,221 @@ Assim, qualquer palpite válido tem necessariamente a estrutura:
 
 Quando não houver perda significativa de qualidade global da aposta, favorecer soluções que **excluam a vitória do PALMEIRAS/SP**, priorizando empate ou derrota.
 
-A preferência pelo Palmeiras não pode violar nenhuma *Hard Constraint*.
+Essa preferência nunca pode violar uma *Hard Constraint* e deve ser tratada apenas como critério secundário ou de desempate entre soluções de qualidade semelhante.
 
 ---
 
-## Critério de seleção
+## O que significa `Score_P14`
 
-O projeto deve avaliar os palpites válidos e selecionar aquele com maior similaridade aos padrões históricos associados a P14.
+O `Score_P14` deve medir o quanto um palpite completo se parece com os padrões históricos encontrados nos bilhetes que alcançaram 14 acertos.
 
-Formalmente:
+O foco é aprender:
 
 ```text
-Palpite* = argmax Similaridade(palpite, padrões históricos de P14)
+P(P14 | características do bilhete)
 ```
 
-sujeito às *Hard Constraints*.
+em vez de apenas:
 
-A função de similaridade pode ser construída a partir de fatores derivados das probabilidades e da composição do palpite, por exemplo:
+```text
+P(acerto de um jogo | características da partida)
+```
 
-- `p(top1)`, `p(top2)` e `p(top3)`;
-- diferença entre `p(top1)` e `p(top2)`;
-- diferença entre `p(top2)` e `p(top3)`;
+O score pode combinar fatores dos secos, dos triplos e do bilhete como um todo.
+
+### Fatores dos secos
+
+Exemplos:
+
+- probabilidade do resultado escolhido;
+- `p(top1) - p(top2)`;
+- `p(top2) - p(top3)`;
 - grau de equilíbrio da partida;
-- perfil probabilístico dos jogos escolhidos como triplos;
-- perfil dos secos `top1`;
-- perfil dos secos `top2`;
-- perfil dos secos `top3`;
-- características agregadas do bilhete.
+- probabilidade média dos 6 secos `top1`;
+- probabilidade média dos 2 secos `top2`;
+- probabilidade média dos 2 secos `top3`;
+- menor probabilidade entre os secos;
+- produto ou soma dos logaritmos das probabilidades dos secos.
 
-A prioridade é identificar fatores que, no histórico, estejam mais associados a P14 e a pontuações altas.
+### Fatores dos triplos
+
+Exemplos:
+
+- `balance` médio dos 4 triplos;
+- `gap12` médio dos 4 triplos;
+- `gap23` médio dos 4 triplos;
+- probabilidade média de `top1` nos jogos triplicados;
+- entropia média dos jogos triplicados;
+- frequência com que P14 ocorreu usando triplos em jogos com perfil semelhante.
+
+A pergunta específica é:
+
+> **Este jogo tem características historicamente compatíveis com um bom uso de triplo em bilhetes P14?**
+
+Isso é diferente de apenas considerar que um jogo é ruim para ser usado como seco.
+
+### Fatores globais do bilhete
+
+Exemplos:
+
+- média e dispersão das probabilidades dos secos;
+- média de equilíbrio de todos os 14 jogos;
+- perfil conjunto dos 4 triplos;
+- perfil conjunto dos 6 secos `top1`;
+- perfil conjunto dos 2 secos `top2`;
+- perfil conjunto dos 2 secos `top3`;
+- interação entre distribuição dos secos e dos triplos.
 
 ---
 
-## Validação histórica
+## Validação histórica — walk-forward
 
-A avaliação deve evitar vazamento de informação futura.
+A avaliação deve impedir qualquer vazamento de informação futura.
 
-Para um concurso histórico `t`, os padrões utilizados para gerar o palpite devem ser derivados apenas dos concursos anteriores:
+Para um concurso histórico `t`:
 
 ```text
 concursos < t
     ↓
-padrões históricos
+treinamento / padrões históricos
     ↓
-palpite do concurso t
+gerar um único palpite para t
     ↓
-resultado real do concurso t
+revelar o resultado real de t
     ↓
-pontuação obtida
+calcular a pontuação obtida
 ```
 
-Esse processo permite avaliar a estratégia em esquema *walk-forward*.
+O próprio concurso avaliado e concursos posteriores jamais podem participar do treinamento usado para gerar o palpite daquele concurso.
 
-O resultado real do concurso avaliado não deve participar da construção do palpite daquele mesmo concurso.
+Uma proteção explícita recomendada é:
+
+```python
+assert max(training_contests) < target_contest
+```
+
+Também é recomendável registrar no resultado do backtest:
+
+```text
+trained_until
+target_contest
+training_matches
+training_contests
+```
+
+---
+
+## Backtest no nível do bilhete
+
+O projeto deve possuir uma camada explícita de backtest com **uma observação por concurso/palpite**, e não apenas estatísticas isoladas por partida.
+
+Fluxo esperado:
+
+```text
+para cada concurso t:
+
+1. usar somente concursos < t
+2. gerar um único palpite válido para t
+3. comparar com o resultado real
+4. contar os acertos
+5. extrair features do bilhete completo
+6. armazenar o resultado
+```
+
+Saída sugerida:
+
+```text
+output/backtest.csv
+```
+
+Exemplos de colunas:
+
+```text
+Concurso
+Pontos
+P14
+P13_plus
+P12_plus
+Score_P14
+trained_until
+triple_mean_balance
+triple_mean_gap12
+triple_mean_gap23
+dry_top1_mean_prob
+dry_top2_mean_prob
+dry_top3_mean_prob
+min_dry_probability
+mean_dry_probability
+```
+
+Esse dataset é a base para descobrir quais fatores realmente diferenciam bilhetes de alta pontuação dos demais.
+
+---
+
+## Alvo principal e regularização por P13/P12
+
+P14 é o objetivo principal, mas é naturalmente um evento raro.
+
+Para reduzir instabilidade estatística, P13 e P12 podem ser utilizados como sinais auxiliares, sem mudar o objetivo final.
+
+Uma opção é utilizar modelos separados:
+
+```text
+modelo_P14
+modelo_P13_plus
+modelo_P12_plus
+```
+
+com score agregado:
+
+```text
+Score = w14 * P(P14) + w13 * P(P13+) + w12 * P(P12+)
+```
+
+respeitando:
+
+```text
+w14 >> w13 > w12
+```
+
+Outra opção é utilizar um alvo hierárquico, desde que P14 mantenha peso claramente dominante.
+
+---
+
+## Baselines obrigatórios
+
+Toda evolução do modelo deve ser comparada a estratégias simples.
+
+Baselines recomendados:
+
+1. **Baseline probabilístico** — maximizar a probabilidade dos secos;
+2. **Baseline de equilíbrio** — colocar os 4 triplos nos 4 jogos mais equilibrados;
+3. **Modelo atual** — score por taxa calibrada de acerto por posição/faixa de probabilidade.
+
+As principais métricas de comparação devem ser:
+
+```text
+P14
+P13+
+P12+
+média de pontos
+mediana de pontos
+desvio-padrão
+```
+
+Também deve ser calculado o ganho relativo (*lift*):
+
+```text
+Lift_P14 = TaxaP14_modelo / TaxaP14_baseline
+```
+
+Um modelo mais complexo só deve ser mantido se superar de forma consistente os baselines em validação histórica sem vazamento.
 
 ---
 
 ## Espaço de busca
 
-A estrutura fixa da estratégia reduz o problema a duas decisões:
+A estrutura fixa reduz o problema a duas decisões:
 
 1. escolher quais 4 dos 14 jogos serão triplos;
 2. nos 10 jogos restantes, escolher exatamente:
@@ -173,7 +337,7 @@ C(14, 4) × 10! / (6! × 2! × 2!)
 = 1.261.260
 ```
 
-Esse espaço permite, em princípio, avaliar exaustivamente todos os palpites estruturalmente válidos antes da aplicação das demais restrições.
+A implementação pode usar programação dinâmica ou outra forma equivalente para evitar materializar desnecessariamente todas as combinações, desde que o ótimo global dentro das restrições seja preservado.
 
 ---
 
@@ -187,17 +351,32 @@ Esse espaço permite, em princípio, avaliar exaustivamente todos os palpites es
 │   └── proximo_concurso.csv
 ├── models/
 ├── output/
-│   └── predictions.csv
-└── scripts/
-    ├── common.py
-    ├── preprocess_data.py
-    ├── train_model.py
-    └── predict_results.py
+│   ├── predictions.csv
+│   └── backtest.csv          # planejado
+├── scripts/
+│   ├── common.py
+│   ├── preprocess_data.py
+│   ├── train_model.py
+│   ├── predict_results.py
+│   └── backtest.py           # planejado
+└── tests/
 ```
 
-### Responsabilidades previstas
+---
 
-#### `scripts/preprocess_data.py`
+## Responsabilidades dos módulos
+
+### `scripts/common.py`
+
+Responsável por funções e estruturas compartilhadas, como:
+
+- leitura e validação dos dados;
+- ranking `top1/top2/top3`;
+- normalização de nomes de equipes;
+- representação das partidas;
+- validação final das *Hard Constraints*.
+
+### `scripts/preprocess_data.py`
 
 Responsável pelo pré-processamento dos dados, incluindo:
 
@@ -206,25 +385,151 @@ Responsável pelo pré-processamento dos dados, incluindo:
 - cálculo ou organização de `p(1)`, `p(X)` e `p(2)`;
 - ranking `top1`, `top2`, `top3`;
 - criação de `top1_hit`, `top2_hit`, `top3_hit`;
-- geração de fatores derivados utilizados pelo modelo.
+- geração de features por partida.
 
-#### `scripts/train_model.py`
+### `scripts/train_model.py`
 
-Responsável por aprender os padrões históricos associados a P14 e pontuações altas, respeitando a separação temporal necessária para o *walk-forward*.
+Responsável por aprender padrões históricos sem utilizar concursos futuros.
 
-#### `scripts/predict_results.py`
+No estado atual, o módulo aprende principalmente taxas calibradas de acerto por posição probabilística e perfis de `gap12`, `gap23` e `balance` no nível da partida.
+
+A evolução prioritária é adicionar aprendizado no **nível do bilhete completo**, permitindo estimar um verdadeiro `Score_P14`.
+
+### `scripts/predict_results.py`
 
 Responsável por:
 
-- gerar os candidatos estruturalmente válidos;
-- aplicar as *Hard Constraints*;
-- calcular o score de similaridade histórica;
-- aplicar a *Soft Constraint* quando apropriado;
-- selecionar um único palpite final.
+- gerar ou percorrer candidatos válidos;
+- aplicar todas as *Hard Constraints*;
+- aplicar o score do modelo;
+- tratar a *Soft Constraint* do Palmeiras;
+- selecionar um único palpite final;
+- validar explicitamente o bilhete vencedor.
 
-#### `main.py`
+A evolução prioritária é fazer o score considerar explicitamente:
 
-Responsável por orquestrar o fluxo completo do projeto e exibir a telemetria necessária para auditoria.
+```text
+Score_ticket = Score_secos + Score_triplos + Score_global_P14
+```
+
+### `scripts/backtest.py` — planejado
+
+Responsável por:
+
+- executar validação *walk-forward* concurso a concurso;
+- gerar um único palpite histórico por concurso;
+- calcular P14, P13+, P12+ e pontos;
+- extrair features do bilhete;
+- produzir `output/backtest.csv`;
+- comparar modelo e baselines.
+
+### `main.py`
+
+Responsável por orquestrar o fluxo do concurso atual, treinar o modelo usando apenas dados anteriores, selecionar o palpite, validar as restrições e exibir a telemetria de auditoria.
+
+---
+
+## Estado atual da implementação
+
+O projeto já possui:
+
+- leitura dos dados históricos e do próximo concurso;
+- probabilidades e ranking `top1/top2/top3`;
+- corte temporal por concurso;
+- score calibrado no nível de cada partida;
+- busca eficiente sob as restrições 10S/0D/4T;
+- validação 10/6/6;
+- regra obrigatória do Flamengo;
+- preferência secundária relativa ao Palmeiras;
+- saída `output/predictions.csv`;
+- testes automatizados.
+
+### Limitação atual principal
+
+O score atual ainda é predominantemente construído no **nível da partida**.
+
+Ele aprende algo próximo de:
+
+```text
+P(top1/top2/top3 acertar | faixa de probabilidade e perfil da partida)
+```
+
+O objetivo final do projeto, porém, é aprender:
+
+```text
+P(P14 | características do bilhete completo)
+```
+
+Portanto, a prioridade do desenvolvimento é migrar o critério de seleção de um somatório de scores de jogos para um verdadeiro **score histórico de bilhete associado a P14**.
+
+---
+
+## Telemetria
+
+A execução deve exibir informação suficiente para auditar a escolha final.
+
+### Por jogo
+
+- `p(1)`, `p(X)` e `p(2)`;
+- ranking `top1`, `top2`, `top3`;
+- resultado correspondente a cada posição;
+- seco ou triplo;
+- posição usada no seco;
+- fatores que contribuíram para o score.
+
+### Por bilhete
+
+A evolução do projeto deve incluir um resumo semelhante a:
+
+```text
+=== SCORE DO BILHETE ===
+
+Score total: ...
+
+Contribuições:
+Secos top1:       ...
+Secos top2:       ...
+Secos top3:       ...
+Perfil triplos:   ...
+Perfil global:    ...
+Score P14:        ...
+```
+
+Também deve listar:
+
+```text
+Fatores mais favoráveis
+Fatores mais desfavoráveis
+```
+
+além da validação completa das restrições.
+
+---
+
+## Ranking dos melhores candidatos
+
+Além do palpite vencedor, é recomendável salvar os melhores candidatos em:
+
+```text
+output/top_candidates.csv
+```
+
+Exemplos de campos:
+
+```text
+rank
+score_p14
+triples
+dry_top1
+dry_top2
+dry_top3
+flamengo_ok
+palmeiras_win_included
+```
+
+Isso permite medir a robustez da decisão.
+
+Se os melhores scores forem muito próximos, a escolha final é frágil. Se o vencedor estiver claramente separado dos demais, o sinal do modelo é mais forte.
 
 ---
 
@@ -258,7 +563,7 @@ X
 
 ### Duplos
 
-Embora a estratégia atual exija zero duplos, o formato previsto é:
+A estratégia atual exige zero duplos, mas o formato suportado é:
 
 ```text
 1X
@@ -274,33 +579,83 @@ X2
 
 ---
 
-## Telemetria
+## Saídas
 
-A execução deve exibir informação suficiente para auditar o palpite final, incluindo:
-
-- probabilidades `p(1)`, `p(X)` e `p(2)`;
-- ranking `top1`, `top2`, `top3`;
-- resultado correspondente a cada posição do ranking;
-- jogos escolhidos como secos e triplos;
-- posição `top1`, `top2` ou `top3` utilizada nos secos;
-- contagem final de `top1`, `top2` e `top3`;
-- verificação das *Hard Constraints*;
-- aplicação da regra do Flamengo;
-- aplicação, quando cabível, da preferência relativa ao Palmeiras;
-- score de similaridade histórica;
-- fatores que mais contribuíram para o score do palpite vencedor.
-
----
-
-## Saída
-
-O projeto deve gerar um único palpite final para o concurso analisado e registrar as previsões em:
+### Atual
 
 ```text
 output/predictions.csv
 ```
 
-O palpite final deve sempre passar por uma validação explícita das *Hard Constraints* antes de ser considerado válido.
+Contém o único palpite final selecionado para o concurso analisado.
+
+### Planejadas
+
+```text
+output/backtest.csv
+output/top_candidates.csv
+```
+
+O palpite final deve sempre passar por validação explícita das *Hard Constraints* antes de ser aceito.
+
+---
+
+## Execução
+
+O projeto utiliza Python 3.10 ou superior.
+
+```bash
+python main.py
+```
+
+A execução atual:
+
+1. identifica o concurso de entrada;
+2. treina usando somente concursos anteriores;
+3. calcula o score dos candidatos sob as restrições;
+4. seleciona um único palpite final;
+5. valida todas as *Hard Constraints*;
+6. grava `output/predictions.csv`.
+
+Para executar os testes:
+
+```bash
+python -m unittest discover -v
+```
+
+---
+
+## Roadmap de maior retorno
+
+Prioridade recomendada:
+
+### 1. Backtest walk-forward completo
+
+Criar `scripts/backtest.py` e `output/backtest.csv`.
+
+### 2. Features no nível do bilhete
+
+Transformar cada palpite histórico em uma observação com características dos secos, triplos e composição global.
+
+### 3. Score_P14 explícito
+
+Treinar o modelo para diferenciar bilhetes P14 dos demais e incluir P13/P12 apenas como regularização auxiliar.
+
+### 4. Score próprio dos triplos
+
+Avaliar diretamente se cada jogo possui perfil historicamente adequado para consumir uma das quatro marcações triplas.
+
+### 5. Baselines e lift
+
+Comparar automaticamente cada evolução com estratégias simples e com o modelo atual.
+
+### 6. Ranking dos melhores candidatos
+
+Salvar os melhores candidatos e medir quão distante o vencedor está das alternativas.
+
+### 7. Telemetria global do bilhete
+
+Explicar quais fatores do bilhete aumentaram ou reduziram o `Score_P14`.
 
 ---
 
@@ -308,20 +663,20 @@ O palpite final deve sempre passar por uma validação explícita das *Hard Cons
 
 O objetivo não é apenas prever partidas isoladamente.
 
-O foco é otimizar o uso das marcações disponíveis da Loteca, procurando a configuração válida que mais se aproxima dos padrões historicamente associados a **14 acertos**.
-
-Em resumo:
+O foco é utilizar as 22 marcações disponíveis da estratégia da forma historicamente mais eficiente possível para buscar P14.
 
 ```text
 histórico
     ↓
 probabilidades e rankings
     ↓
-padrões associados a P14
+backtest de bilhetes completos
     ↓
-geração de palpites válidos
+fatores associados a P14
     ↓
-score de similaridade
+Score_P14
+    ↓
+geração/avaliação dos palpites válidos
     ↓
 Hard Constraints
     ↓
@@ -330,30 +685,6 @@ Soft Constraint
 palpite final
 ```
 
-## Execução
+Em resumo:
 
-O projeto usa apenas a biblioteca padrão do Python (3.10 ou superior):
-
-```bash
-python main.py
-```
-
-A execução treina novamente o modelo usando somente concursos anteriores ao
-concurso de entrada, percorre todo o espaço estrutural por programação dinâmica,
-valida explicitamente as restrições e grava o bilhete em
-`output/predictions.csv`. O score principal é a soma dos logaritmos das taxas de
-acerto calibradas por posição e faixa de probabilidade. Um termo pequeno mede a
-semelhança dos gaps e do equilíbrio com os jogos históricos em que cada posição
-foi a vencedora. Dessa forma, probabilidades isoladas não são usadas como único
-critério.
-
-Para executar os testes automatizados:
-
-```bash
-python -m unittest discover -v
-```
-
-O parâmetro `before_contest` de `scripts.train_model.train` é o corte temporal:
-linhas do próprio concurso ou de concursos futuros nunca entram no modelo. A
-mesma função pode ser chamada repetidamente com cortes crescentes para uma
-avaliação *walk-forward*.
+> **Escolher, entre todos os palpites válidos, aquele cujo perfil completo mais se aproxima dos padrões que historicamente mais estiveram associados a 14 acertos.**
